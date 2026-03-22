@@ -1,5 +1,5 @@
 from drive_loader import load_drive_files
-from vector_db import add_documents
+from backend.vector_db import add_documents
 
 
 def build_vector_database():

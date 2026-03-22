@@ -2,10 +2,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import re
 from fastapi.middleware.cors import CORSMiddleware
-from rag import rag_answer
-from scheduler import schedule, cancel, check_availability
-from intent_classifier import classify_intent
-from entity_extractor import extract_entities
+from backend.rag import rag_answer
+from backend.scheduler import schedule, cancel, check_availability
+from backend.intent_classifier import classify_intent
+from backend.entity_extractor import extract_entities
 
 app = FastAPI()
 

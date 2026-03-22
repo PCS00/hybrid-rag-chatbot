@@ -1,5 +1,5 @@
 from openai import OpenAI
-from vector_db import search_docs
+from backend.vector_db import search_docs
 
 client = OpenAI()
 
