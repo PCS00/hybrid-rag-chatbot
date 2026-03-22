@@ -10,8 +10,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar"
 ]
 
-creds = Credentials.from_service_account_file(
-    "credentials.json",
+import os
+import json
+
+creds_json = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
+
+creds = Credentials.from_service_account_info(
+    creds_json,
     scopes=SCOPES
 )
 
