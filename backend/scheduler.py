@@ -1,18 +1,23 @@
 import pandas as pd
 import io
-import yagmail
+import os
+import json
+from datetime import datetime, timedelta
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from google.oauth2.service_account import Credentials
 
+import yagmail
+
+
+# --------------------------------
+# GOOGLE CONFIG
+# --------------------------------
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/calendar"
 ]
-
-import os
-import json
 
 creds_json = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
 
@@ -26,18 +31,21 @@ calendar_service = build("calendar", "v3", credentials=creds)
 
 CALENDAR_ID = "primary"
 
+
+# --------------------------------
+# EMAIL CONFIG
+# --------------------------------
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
+
+
 def send_email(to_email, name, doctor, day, time, link):
+    try:
+        yag = yagmail.SMTP(EMAIL_USER, EMAIL_PASS)
 
-    
+        subject = "Appointment Confirmation"
 
-    EMAIL_USER = os.getenv("EMAIL_USER")
-    EMAIL_PASS = os.getenv("EMAIL_PASS")
-
-    yag = yagmail.SMTP(EMAIL_USER, EMAIL_PASS)
-
-    subject = "Appointment Confirmation"
-
-    content = f"""
+        content = f"""
 Hi {name},
 
 Your appointment has been successfully booked!
@@ -52,9 +60,15 @@ Calendar Link:
 Thank you 😊
 """
 
-    yag.send(to=to_email, subject=subject, contents=content)
+        yag.send(to=to_email, subject=subject, contents=content)
+
+    except Exception as e:
+        print("Email failed:", str(e))
 
 
+# --------------------------------
+# LOAD EXCEL FROM DRIVE
+# --------------------------------
 def load_excel():
 
     results = drive_service.files().list(
@@ -77,6 +91,9 @@ def load_excel():
     return df, file_id
 
 
+# --------------------------------
+# SAVE EXCEL
+# --------------------------------
 def save_excel(df, file_id):
 
     output = io.BytesIO()
@@ -93,50 +110,59 @@ def save_excel(df, file_id):
         media_body=media
     ).execute()
 
-from datetime import datetime, timedelta
 
-
+# --------------------------------
+# CREATE CALENDAR EVENT
+# --------------------------------
 def create_calendar_event(doctor, day, time, name, email):
 
-    # Convert to datetime
-    start = datetime.strptime(f"{day} {time}", "%A %I:%M %p")
+    try:
+        start = datetime.strptime(f"{day} {time}", "%A %I:%M %p")
+        end = start + timedelta(hours=1)
 
-    end = start + timedelta(hours=1)
-
-    event = {
-        "summary": f"Appointment with {doctor}",
-        "description": f"Patient: {name} ({email})",
-        "start": {
-            "dateTime": start.isoformat(),
-            "timeZone": "Asia/Kolkata"
-        },
-        "end": {
-            "dateTime": end.isoformat(),
-            "timeZone": "Asia/Kolkata"
+        event = {
+            "summary": f"Appointment with {doctor}",
+            "description": f"Patient: {name} ({email})",
+            "start": {
+                "dateTime": start.isoformat(),
+                "timeZone": "Asia/Kolkata"
+            },
+            "end": {
+                "dateTime": end.isoformat(),
+                "timeZone": "Asia/Kolkata"
+            }
         }
-    }
 
-    event = calendar_service.events().insert(
-        calendarId=CALENDAR_ID,
-        body=event
-    ).execute()
+        event = calendar_service.events().insert(
+            calendarId=CALENDAR_ID,
+            body=event
+        ).execute()
 
-    return event.get("htmlLink")
+        return event.get("htmlLink")
+
+    except Exception as e:
+        print("Calendar error:", str(e))
+        return "Calendar link unavailable"
 
 
+# --------------------------------
+# CHECK AVAILABILITY
+# --------------------------------
 def check_availability(doctor):
 
     df, _ = load_excel()
 
+    doctor = doctor.lower().strip()
+
     available = df[
-        (df["Consultant"].astype(str).str.lower().str.contains(doctor.lower())) &
+        df["Consultant"].astype(str).str.lower().str.contains(doctor) &
         (df["Available"].astype(str).str.lower() == "yes")
     ]
 
     if available.empty:
-        return f"{doctor} has no available appointments."
+        return f"{doctor.title()} has no available appointments."
 
-    response = f"{doctor} is available at:\n"
+    response = f"{doctor.title()} is available at:\n"
 
     for _, row in available.iterrows():
         response += f"- {row['Day']} at {row['Time']}\n"
@@ -144,19 +170,30 @@ def check_availability(doctor):
     return response
 
 
+# --------------------------------
+# SCHEDULE APPOINTMENT
+# --------------------------------
 def schedule(doctor, day, time, name, email):
 
     df, file_id = load_excel()
 
+    doctor = doctor.lower().strip()
+    day = day.lower().strip()
+    time = time.lower().strip()
+
+    df["Consultant"] = df["Consultant"].astype(str)
+    df["Day"] = df["Day"].astype(str)
+    df["Time"] = df["Time"].astype(str)
+
     match = df[
-        (df["Consultant"] == doctor)
-        & (df["Day"] == day)
-        & (df["Time"] == time)
-        & (df["Available"] == "Yes")
+        df["Consultant"].str.lower().str.contains(doctor) &
+        df["Day"].str.lower().str.contains(day) &
+        df["Time"].str.lower().str.contains(time) &
+        (df["Available"].str.lower() == "yes")
     ]
 
     if match.empty:
-        return "That slot is not available."
+        return f"That slot is not available.\n\n{check_availability(doctor)}"
 
     index = match.index[0]
 
@@ -166,32 +203,45 @@ def schedule(doctor, day, time, name, email):
 
     save_excel(df, file_id)
 
+    # Use original formatted values from sheet
+    booked_doctor = df.at[index, "Consultant"]
+    booked_day = df.at[index, "Day"]
+    booked_time = df.at[index, "Time"]
+
     calendar_link = create_calendar_event(
-        doctor, day, time, name, email
+        booked_doctor, booked_day, booked_time, name, email
     )
-    send_email(email, name, doctor, day, time, calendar_link)
+
+    send_email(email, name, booked_doctor, booked_day, booked_time, calendar_link)
 
     return f"""
-Appointment confirmed!
+✅ Appointment confirmed!
 
-Doctor: {doctor}
-Day: {day}
-Time: {time}
+Doctor: {booked_doctor}
+Day: {booked_day}
+Time: {booked_time}
 
-Calendar Event:
+📅 Calendar:
 {calendar_link}
 """
 
 
+# --------------------------------
+# CANCEL APPOINTMENT
+# --------------------------------
 def cancel(doctor, day, time):
 
     df, file_id = load_excel()
 
+    doctor = doctor.lower().strip()
+    day = day.lower().strip()
+    time = time.lower().strip()
+
     match = df[
-        (df["Consultant"] == doctor)
-        & (df["Day"] == day)
-        & (df["Time"] == time)
-        & (df["Available"] == "No")
+        df["Consultant"].astype(str).str.lower().str.contains(doctor) &
+        df["Day"].astype(str).str.lower().str.contains(day) &
+        df["Time"].astype(str).str.lower().str.contains(time) &
+        (df["Available"].astype(str).str.lower() == "no")
     ]
 
     if match.empty:
@@ -205,4 +255,4 @@ def cancel(doctor, day, time):
 
     save_excel(df, file_id)
 
-    return f"Appointment with {doctor} on {day} at {time} cancelled."
+    return f"❌ Appointment cancelled for {doctor.title()} on {day.title()} at {time}."
