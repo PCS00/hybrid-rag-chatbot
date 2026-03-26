@@ -179,7 +179,7 @@ def schedule(doctor, day, time, name, email):
 
     doctor = doctor.lower().strip()
     day = day.lower().strip()
-    time = time.lower().strip()
+    time = normalize_time(time)
 
     df["Consultant"] = df["Consultant"].astype(str)
     df["Day"] = df["Day"].astype(str)
@@ -188,7 +188,7 @@ def schedule(doctor, day, time, name, email):
     match = df[
         df["Consultant"].str.lower().str.contains(doctor) &
         df["Day"].str.lower().str.contains(day) &
-        df["Time"].str.lower().str.contains(time) &
+        (df["Time"].str.upper() == time.upper()) &
         (df["Available"].str.lower() == "yes")
     ]
 
@@ -225,6 +225,18 @@ Time: {booked_time}
 {calendar_link}
 """
 
+def normalize_time(t):
+    t = t.lower().replace(".", "").strip()
+
+    if "am" in t or "pm" in t:
+        try:
+            return datetime.strptime(t, "%I %p").strftime("%I:%M %p")
+        except:
+            try:
+                return datetime.strptime(t, "%I:%M %p").strftime("%I:%M %p")
+            except:
+                return t.upper()
+    return t.upper()
 
 # --------------------------------
 # CANCEL APPOINTMENT

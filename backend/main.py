@@ -10,6 +10,8 @@ from backend.entity_extractor import extract_entities
 
 from openai import OpenAI
 
+conversation_state = {}
+
 client = OpenAI()
 
 app = FastAPI()
@@ -88,7 +90,18 @@ def chat(request: ChatRequest):
         pending_booking.clear()
 
         return {"reply": reply}
+    # Restore previous context if exists
+    if conversation_state:
+        prev = conversation_state
+    else:
+        prev = {}
 
+    # If user just gives time (like "10:00 AM")
+    if conversation_state and any(x in message.lower() for x in ["am", "pm"]):
+        conversation_state["time"] = message.strip()
+        intent = "schedule"
+    else:
+        intent = classify_intent(message)
     # --------------------------------
     # STEP 2: CLASSIFY INTENT
     # --------------------------------
@@ -130,10 +143,21 @@ def chat(request: ChatRequest):
     # --------------------------------
     if intent == "schedule":
 
-        if not doctor or not day or not time:
-            return {
-                "reply": "Sure! Please tell me the doctor, day, and time you'd like to book 😊"
-            }
+        # fill missing values from memory
+        doctor = doctor or prev.get("doctor")
+        day = day or prev.get("day")
+        time = time or prev.get("time")
+
+        # save context
+        conversation_state["doctor"] = doctor
+        conversation_state["day"] = day
+        conversation_state["time"] = time
+
+        if not doctor:
+            return {"reply": "Which doctor would you like to book with?"}
+
+        if not day or not time:
+            return {"reply": check_availability(doctor)}
 
         pending_booking["doctor"] = doctor
         pending_booking["day"] = day
@@ -142,6 +166,8 @@ def chat(request: ChatRequest):
         return {
             "reply": "Got it! Please provide your name and email to confirm the booking 📧"
         }
+    pending_booking.clear()
+    conversation_state.clear()
 
     # --------------------------------
     # STEP 7: CANCEL
