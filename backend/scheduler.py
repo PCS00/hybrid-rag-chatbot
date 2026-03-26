@@ -175,46 +175,46 @@ def check_availability(doctor):
 # --------------------------------
 def schedule(doctor, day, time, name, email):
 
-    df, file_id = load_excel()
+    try:
+        df, file_id = load_excel()
 
-    doctor = doctor.lower().strip()
-    day = day.lower().strip()
-    time = normalize_time(time)
+        doctor = doctor.lower().strip()
+        day = day.lower().strip()
+        time = normalize_time(time)
 
-    df["Consultant"] = df["Consultant"].astype(str)
-    df["Day"] = df["Day"].astype(str)
-    df["Time"] = df["Time"].astype(str)
+        df["Consultant"] = df["Consultant"].astype(str)
+        df["Day"] = df["Day"].astype(str)
+        df["Time"] = df["Time"].astype(str)
 
-    match = df[
-        df["Consultant"].str.lower().str.contains(doctor) &
-        df["Day"].str.lower().str.contains(day) &
-        (df["Time"].str.upper() == time.upper()) &
-        (df["Available"].str.lower() == "yes")
-    ]
+        match = df[
+            df["Consultant"].str.lower().str.contains(doctor) &
+            df["Day"].str.lower().str.contains(day) &
+            (df["Time"].str.upper() == time.upper()) &
+            (df["Available"].str.lower() == "yes")
+        ]
 
-    if match.empty:
-        return f"That slot is not available.\n\n{check_availability(doctor)}"
+        if match.empty:
+            return f"That slot is not available.\n\n{check_availability(doctor)}"
 
-    index = match.index[0]
+        index = match.index[0]
 
-    df.at[index, "Available"] = "No"
-    df.at[index, "Name"] = name
-    df.at[index, "Email"] = email
+        df.at[index, "Available"] = "No"
+        df.at[index, "Name"] = name
+        df.at[index, "Email"] = email
 
-    save_excel(df, file_id)
+        save_excel(df, file_id)
 
-    # Use original formatted values from sheet
-    booked_doctor = df.at[index, "Consultant"]
-    booked_day = df.at[index, "Day"]
-    booked_time = df.at[index, "Time"]
+        booked_doctor = df.at[index, "Consultant"]
+        booked_day = df.at[index, "Day"]
+        booked_time = df.at[index, "Time"]
 
-    calendar_link = create_calendar_event(
-        booked_doctor, booked_day, booked_time, name, email
-    )
+        calendar_link = create_calendar_event(
+            booked_doctor, booked_day, booked_time, name, email
+        )
 
-    send_email(email, name, booked_doctor, booked_day, booked_time, calendar_link)
+        send_email(email, name, booked_doctor, booked_day, booked_time, calendar_link)
 
-    return f"""
+        return f"""
 ✅ Appointment confirmed!
 
 Doctor: {booked_doctor}
@@ -224,6 +224,10 @@ Time: {booked_time}
 📅 Calendar:
 {calendar_link}
 """
+
+    except Exception as e:
+        print("SCHEDULER ERROR:", str(e))
+        return "Something went wrong while booking. Please try again."
 
 def normalize_time(t):
     t = t.lower().replace(".", "").strip()
