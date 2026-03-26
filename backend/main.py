@@ -76,7 +76,11 @@ def chat(request: ChatRequest):
 
         pending_booking.clear()
 
-        return {"reply": reply}
+        # --------------------------------
+        # DEFAULT FALLBACK (VERY IMPORTANT)
+        # --------------------------------
+
+        return {"reply": fallback_response(message)}
 
     # --------------------------------
     # CLASSIFY INTENT
