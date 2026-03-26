@@ -24,4 +24,13 @@ Return only the category.
         messages=[{"role": "user", "content": prompt}]
     )
 
-    return response.choices[0].message.content.strip().lower()
+    intent = response.choices[0].message.content.strip().lower()
+
+    if "schedule" in intent or "book" in intent:
+        return "schedule"
+    if "cancel" in intent:
+        return "cancel"
+    if "availability" in intent:
+        return "availability"
+
+    return "knowledge"
