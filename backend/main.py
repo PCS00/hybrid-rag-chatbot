@@ -6,6 +6,18 @@ from backend.rag import rag_answer
 from backend.scheduler import schedule, cancel, check_availability
 from backend.intent_classifier import classify_intent
 from backend.entity_extractor import extract_entities
+from openai import OpenAI
+client = OpenAI()
+
+def fallback_response(message):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a friendly clinic assistant."},
+            {"role": "user", "content": message}
+        ]
+    )
+    return response.choices[0].message.content
 
 app = FastAPI()
 
@@ -73,7 +85,12 @@ def chat(request: ChatRequest):
     intent = classify_intent(message)
 
     if intent == "knowledge":
-        return {"reply": rag_answer(message)}
+        reply = rag_answer(message)
+
+        if not reply or "i don't have" in reply.lower():
+            reply = fallback_response(message)
+
+    return {"reply": reply}
 
     entities = extract_entities(message)
 

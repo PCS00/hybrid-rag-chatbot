@@ -7,20 +7,20 @@ client = OpenAI()
 def rag_answer(question):
 
     docs = search_docs(question)
-
     context = "\n".join(docs)
 
     prompt = f"""
-You are a helpful clinic assistant.
+You are a friendly and helpful clinic assistant.
 
-Answer ONLY using the information in the context.
-If the answer is not in the context say:
-"I don't have that information."
+Use the context below if relevant.
+If the context is not helpful, answer naturally using your own knowledge.
+
+Keep answers conversational and helpful.
 
 Context:
 {context}
 
-Question:
+User question:
 {question}
 """
 
@@ -29,4 +29,4 @@ Question:
         messages=[{"role": "user", "content": prompt}]
     )
 
-    return response.choices[0].message.content
+    return response.choices[0].message.content.strip()

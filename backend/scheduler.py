@@ -1,5 +1,6 @@
 import pandas as pd
 import io
+import yagmail
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -24,6 +25,34 @@ drive_service = build("drive", "v3", credentials=creds)
 calendar_service = build("calendar", "v3", credentials=creds)
 
 CALENDAR_ID = "primary"
+
+def send_email(to_email, name, doctor, day, time, link):
+
+    
+
+    EMAIL_USER = os.getenv("EMAIL_USER")
+    EMAIL_PASS = os.getenv("EMAIL_PASS")
+
+    yag = yagmail.SMTP(EMAIL_USER, EMAIL_PASS)
+
+    subject = "Appointment Confirmation"
+
+    content = f"""
+Hi {name},
+
+Your appointment has been successfully booked!
+
+Doctor: {doctor}
+Date: {day}
+Time: {time}
+
+Calendar Link:
+{link}
+
+Thank you 😊
+"""
+
+    yag.send(to=to_email, subject=subject, contents=content)
 
 
 def load_excel():
@@ -140,6 +169,7 @@ def schedule(doctor, day, time, name, email):
     calendar_link = create_calendar_event(
         doctor, day, time, name, email
     )
+    send_email(email, name, doctor, day, time, calendar_link)
 
     return f"""
 Appointment confirmed!
