@@ -134,8 +134,7 @@ def chat(request: ChatRequest):
     if intent == "availability":
 
         if not doctor:
-            return {"reply": "Please tell me which doctor you're asking about 😊"}
-
+            return {"reply": "Which doctor would you like to book with? (e.g., Dr Smith)"}
         return {"reply": check_availability(doctor)}
 
     # --------------------------------

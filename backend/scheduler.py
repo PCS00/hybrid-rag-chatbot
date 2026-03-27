@@ -145,6 +145,15 @@ def create_calendar_event(doctor, day, time, name, email):
         return "Calendar link unavailable"
 
 
+def normalize_text(text):
+    return (
+        text.lower()
+        .replace(".", "")
+        .replace("dr", "")
+        .strip()
+    )
+
+
 # --------------------------------
 # CHECK AVAILABILITY
 # --------------------------------
@@ -178,11 +187,11 @@ def schedule(doctor, day, time, name, email):
     try:
         df, file_id = load_excel()
 
-        doctor = doctor.lower().strip()
+        doctor = normalize_text(doctor)
         day = day.lower().strip()
         time = normalize_time(time)
 
-        df["Consultant"] = df["Consultant"].astype(str)
+        df["Consultant"].astype(str).apply(lambda x: normalize_text(x)).str.contains(doctor)
         df["Day"] = df["Day"].astype(str)
         df["Time"] = df["Time"].astype(str)
 
