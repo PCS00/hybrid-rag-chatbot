@@ -10,8 +10,6 @@ from backend.entity_extractor import extract_entities
 
 from openai import OpenAI
 
-conversation_state = {}
-
 client = OpenAI()
 
 app = FastAPI()
@@ -30,16 +28,17 @@ class ChatRequest(BaseModel):
 
 
 pending_booking = {}
+conversation_state = {}
 
 
 # -------------------------------
-# FALLBACK RESPONSE
+# FALLBACK
 # -------------------------------
 def fallback_response(message):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a friendly clinic assistant."},
+            {"role": "system", "content": "You are a helpful clinic assistant."},
             {"role": "user", "content": message}
         ]
     )
@@ -47,7 +46,7 @@ def fallback_response(message):
 
 
 # -------------------------------
-# EXTRACT USER INFO
+# USER INFO
 # -------------------------------
 def extract_user_info(message):
     email_match = re.search(r'\S+@\S+', message)
@@ -56,28 +55,34 @@ def extract_user_info(message):
         return None, None
 
     email = email_match.group(0)
-    name = message.replace(email, "").strip()
+    name = message.replace(email, "").replace(",", "").strip()
+
+    if len(name) < 2:
+        return None, None
 
     return name, email
 
 
 # -------------------------------
-# CHAT ENDPOINT
+# CHAT
 # -------------------------------
 @app.post("/chat")
 def chat(request: ChatRequest):
 
-    message = request.message
+    message = request.message.strip()
+
+    if not message:
+        return {"reply": "Could you please clarify your request?"}
 
     # --------------------------------
-    # STEP 1: USER PROVIDES NAME + EMAIL
+    # EMAIL STEP (ONLY IF EMAIL PRESENT)
     # --------------------------------
-    if pending_booking:
+    if pending_booking and "@" in message:
 
         name, email = extract_user_info(message)
 
         if not name or not email:
-            return {"reply": "Please provide your name and email 😊"}
+            return {"reply": "Please provide a valid name and email 😊"}
 
         reply = schedule(
             pending_booking["doctor"],
@@ -87,31 +92,23 @@ def chat(request: ChatRequest):
             email
         )
 
-        pending_booking.clear()
+        if "confirmed" in reply.lower():
+            pending_booking.clear()
+            conversation_state.clear()
+        else:
+            return {"reply": reply}
 
         return {"reply": reply}
-    # Restore previous context if exists
-    if conversation_state:
-        prev = conversation_state
-    else:
-        prev = {}
 
-    # If user just gives time (like "10:00 AM")
-    if conversation_state and any(x in message.lower() for x in ["am", "pm"]):
-        conversation_state["time"] = message.strip()
-        intent = "schedule"
-    else:
-        intent = classify_intent(message)
     # --------------------------------
-    # STEP 2: CLASSIFY INTENT
+    # CLASSIFY INTENT
     # --------------------------------
     intent = classify_intent(message)
 
     # --------------------------------
-    # STEP 3: KNOWLEDGE (RAG + FALLBACK)
+    # KNOWLEDGE
     # --------------------------------
     if intent == "knowledge":
-
         reply = rag_answer(message)
 
         if not reply or "i don't have" in reply.lower():
@@ -120,7 +117,7 @@ def chat(request: ChatRequest):
         return {"reply": reply}
 
     # --------------------------------
-    # STEP 4: EXTRACT ENTITIES
+    # ENTITY EXTRACTION
     # --------------------------------
     entities = extract_entities(message)
 
@@ -128,29 +125,33 @@ def chat(request: ChatRequest):
     day = entities.get("day")
     time = entities.get("time")
 
+    # restore context
+    doctor = doctor or conversation_state.get("doctor")
+    day = day or conversation_state.get("day")
+    time = time or conversation_state.get("time")
+
+    # save context
+    if doctor:
+        conversation_state["doctor"] = doctor
+    if day:
+        conversation_state["day"] = day
+    if time:
+        conversation_state["time"] = time
+
     # --------------------------------
-    # STEP 5: AVAILABILITY
+    # AVAILABILITY
     # --------------------------------
     if intent == "availability":
 
         if not doctor:
-            return {"reply": "Which doctor would you like to book with? (e.g., Dr Smith)"}
+            return {"reply": "Which doctor would you like to check?"}
+
         return {"reply": check_availability(doctor)}
 
     # --------------------------------
-    # STEP 6: SCHEDULE
+    # SCHEDULE
     # --------------------------------
     if intent == "schedule":
-
-        # fill missing values from memory
-        doctor = doctor or prev.get("doctor")
-        day = day or prev.get("day")
-        time = time or prev.get("time")
-
-        # save context
-        conversation_state["doctor"] = doctor
-        conversation_state["day"] = day
-        conversation_state["time"] = time
 
         if not doctor:
             return {"reply": "Which doctor would you like to book with?"}
@@ -165,11 +166,9 @@ def chat(request: ChatRequest):
         return {
             "reply": "Got it! Please provide your name and email to confirm the booking 📧"
         }
-    pending_booking.clear()
-    conversation_state.clear()
 
     # --------------------------------
-    # STEP 7: CANCEL
+    # CANCEL
     # --------------------------------
     if intent == "cancel":
 
@@ -179,6 +178,7 @@ def chat(request: ChatRequest):
         return {"reply": cancel(doctor, day, time)}
 
     # --------------------------------
-    # FINAL FALLBACK (NEVER CRASH)
+    # FINAL FALLBACK
     # --------------------------------
+    pending_booking.clear()
     return {"reply": fallback_response(message)}

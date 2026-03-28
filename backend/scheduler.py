@@ -2,6 +2,7 @@ import pandas as pd
 import io
 import os
 import json
+import traceback
 from datetime import datetime, timedelta
 
 from googleapiclient.discovery import build
@@ -11,9 +12,9 @@ from google.oauth2.service_account import Credentials
 import yagmail
 
 
-# --------------------------------
-# GOOGLE CONFIG
-# --------------------------------
+# -------------------------------
+# CONFIG
+# -------------------------------
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/calendar"
@@ -31,71 +32,75 @@ calendar_service = build("calendar", "v3", credentials=creds)
 
 CALENDAR_ID = "primary"
 
-
-# --------------------------------
-# EMAIL CONFIG
-# --------------------------------
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
 
+# -------------------------------
+# HELPERS
+# -------------------------------
+def normalize_text(text):
+    return text.lower().replace(".", "").replace("dr", "").strip()
+
+
+def normalize_time(t):
+    t = t.lower().replace(".", "").strip()
+
+    try:
+        return datetime.strptime(t, "%I:%M %p").strftime("%I:%M %p")
+    except:
+        try:
+            return datetime.strptime(t, "%I %p").strftime("%I:%M %p")
+        except:
+            return t.upper()
+
+
+# -------------------------------
+# EMAIL
+# -------------------------------
 def send_email(to_email, name, doctor, day, time, link):
     try:
         yag = yagmail.SMTP(EMAIL_USER, EMAIL_PASS)
 
-        subject = "Appointment Confirmation"
-
-        content = f"""
+        yag.send(
+            to=to_email,
+            subject="Appointment Confirmation",
+            contents=f"""
 Hi {name},
 
-Your appointment has been successfully booked!
+Your appointment is confirmed!
 
 Doctor: {doctor}
-Date: {day}
+Day: {day}
 Time: {time}
 
-Calendar Link:
+Link:
 {link}
-
-Thank you 😊
 """
-
-        yag.send(to=to_email, subject=subject, contents=content)
-
+        )
     except Exception as e:
-        print("Email failed:", str(e))
+        print("Email error:", e)
 
 
-# --------------------------------
-# LOAD EXCEL FROM DRIVE
-# --------------------------------
+# -------------------------------
+# LOAD/SAVE EXCEL
+# -------------------------------
 def load_excel():
-
     results = drive_service.files().list(
         q="name='appointments.xlsx'",
         fields="files(id,name)"
     ).execute()
 
-    files = results.get("files", [])
+    file_id = results["files"][0]["id"]
 
-    if not files:
-        raise Exception("appointments.xlsx not found")
-
-    file_id = files[0]["id"]
-
-    request = drive_service.files().get_media(fileId=file_id)
-    data = request.execute()
+    data = drive_service.files().get_media(fileId=file_id).execute()
 
     df = pd.read_excel(io.BytesIO(data))
 
     return df, file_id
 
 
-# --------------------------------
-# SAVE EXCEL
-# --------------------------------
 def save_excel(df, file_id):
-
     output = io.BytesIO()
     df.to_excel(output, index=False)
     output.seek(0)
@@ -105,66 +110,20 @@ def save_excel(df, file_id):
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    drive_service.files().update(
-        fileId=file_id,
-        media_body=media
-    ).execute()
+    drive_service.files().update(fileId=file_id, media_body=media).execute()
 
 
-# --------------------------------
-# CREATE CALENDAR EVENT
-# --------------------------------
-def create_calendar_event(doctor, day, time, name, email):
-
-    try:
-        start = datetime.strptime(f"{day} {time}", "%A %I:%M %p")
-        end = start + timedelta(hours=1)
-
-        event = {
-            "summary": f"Appointment with {doctor}",
-            "description": f"Patient: {name} ({email})",
-            "start": {
-                "dateTime": start.isoformat(),
-                "timeZone": "Asia/Kolkata"
-            },
-            "end": {
-                "dateTime": end.isoformat(),
-                "timeZone": "Asia/Kolkata"
-            }
-        }
-
-        event = calendar_service.events().insert(
-            calendarId=CALENDAR_ID,
-            body=event
-        ).execute()
-
-        return event.get("htmlLink")
-
-    except Exception as e:
-        print("Calendar error:", str(e))
-        return "Calendar link unavailable"
-
-
-def normalize_text(text):
-    return (
-        text.lower()
-        .replace(".", "")
-        .replace("dr", "")
-        .strip()
-    )
-
-
-# --------------------------------
-# CHECK AVAILABILITY
-# --------------------------------
+# -------------------------------
+# AVAILABILITY
+# -------------------------------
 def check_availability(doctor):
 
     df, _ = load_excel()
 
-    doctor = doctor.lower().strip()
+    doctor = normalize_text(doctor)
 
     available = df[
-        df["Consultant"].astype(str).str.lower().str.contains(doctor) &
+        df["Consultant"].astype(str).apply(lambda x: normalize_text(x)).str.contains(doctor) &
         (df["Available"].astype(str).str.lower() == "yes")
     ]
 
@@ -179,26 +138,22 @@ def check_availability(doctor):
     return response
 
 
-# --------------------------------
-# SCHEDULE APPOINTMENT
-# --------------------------------
+# -------------------------------
+# SCHEDULE
+# -------------------------------
 def schedule(doctor, day, time, name, email):
 
     try:
         df, file_id = load_excel()
 
-        doctor = normalize_text(doctor)
+        doctor_norm = normalize_text(doctor)
         day = day.lower().strip()
-        time = normalize_time(time)
-
-        df["Consultant"].astype(str).apply(lambda x: normalize_text(x)).str.contains(doctor)
-        df["Day"] = df["Day"].astype(str)
-        df["Time"] = df["Time"].astype(str)
+        time_norm = normalize_time(time)
 
         match = df[
-            df["Consultant"].str.lower().str.contains(doctor) &
+            df["Consultant"].astype(str).apply(lambda x: normalize_text(x)).str.contains(doctor_norm) &
             df["Day"].str.lower().str.contains(day) &
-            (df["Time"].str.upper() == time.upper()) &
+            (df["Time"].str.upper() == time_norm.upper()) &
             (df["Available"].str.lower() == "yes")
         ]
 
@@ -217,9 +172,7 @@ def schedule(doctor, day, time, name, email):
         booked_day = df.at[index, "Day"]
         booked_time = df.at[index, "Time"]
 
-        calendar_link = create_calendar_event(
-            booked_doctor, booked_day, booked_time, name, email
-        )
+        calendar_link = "Calendar link here"  # optional
 
         send_email(email, name, booked_doctor, booked_day, booked_time, calendar_link)
 
@@ -229,44 +182,29 @@ def schedule(doctor, day, time, name, email):
 Doctor: {booked_doctor}
 Day: {booked_day}
 Time: {booked_time}
-
-📅 Calendar:
-{calendar_link}
 """
 
-    except Exception as e:
-        print("SCHEDULER ERROR:", str(e))
+    except Exception:
+        traceback.print_exc()
         return "Something went wrong while booking. Please try again."
 
-def normalize_time(t):
-    t = t.lower().replace(".", "").strip()
 
-    if "am" in t or "pm" in t:
-        try:
-            return datetime.strptime(t, "%I %p").strftime("%I:%M %p")
-        except:
-            try:
-                return datetime.strptime(t, "%I:%M %p").strftime("%I:%M %p")
-            except:
-                return t.upper()
-    return t.upper()
-
-# --------------------------------
-# CANCEL APPOINTMENT
-# --------------------------------
+# -------------------------------
+# CANCEL
+# -------------------------------
 def cancel(doctor, day, time):
 
     df, file_id = load_excel()
 
-    doctor = doctor.lower().strip()
+    doctor = normalize_text(doctor)
     day = day.lower().strip()
-    time = time.lower().strip()
+    time = normalize_time(time)
 
     match = df[
-        df["Consultant"].astype(str).str.lower().str.contains(doctor) &
-        df["Day"].astype(str).str.lower().str.contains(day) &
-        df["Time"].astype(str).str.lower().str.contains(time) &
-        (df["Available"].astype(str).str.lower() == "no")
+        df["Consultant"].astype(str).apply(lambda x: normalize_text(x)).str.contains(doctor) &
+        df["Day"].str.lower().str.contains(day) &
+        (df["Time"].str.upper() == time.upper()) &
+        (df["Available"].str.lower() == "no")
     ]
 
     if match.empty:
@@ -280,4 +218,4 @@ def cancel(doctor, day, time):
 
     save_excel(df, file_id)
 
-    return f"❌ Appointment cancelled for {doctor.title()} on {day.title()} at {time}."
+    return "Appointment cancelled successfully."
